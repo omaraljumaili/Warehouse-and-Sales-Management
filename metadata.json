@@ -1,0 +1,6 @@
+{
+  "name": "SmartFlow Inventory",
+  "description": "A premium, Apple-inspired inventory and sales management system featuring POS, CRM, bilingual support, and advanced performance analytics.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}
