@@ -1,14 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Users, Truck, Plus, Phone, Mail, MapPin, Hash, Trash2, Search, Edit3, X, DollarSign } from 'lucide-react';
 import { db } from '../db';
-import type { Language, Customer, Supplier, Payment } from '../types';
+import type { Language, Customer, Supplier, Payment, TranslationStrings } from '../types';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface CRMViewProps {
   lang: Language;
-  t: any;
+  t: TranslationStrings;
 }
 
 export function CRMView({ lang, t }: CRMViewProps) {
@@ -18,6 +18,8 @@ export function CRMView({ lang, t }: CRMViewProps) {
   const [editingContact, setEditingContact] = useState<Customer | Supplier | null>(null);
   const [viewingDetails, setViewingDetails] = useState<Customer | Supplier | null>(null);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const methodSelectRef = useRef<HTMLSelectElement>(null);
 
   const customers = useLiveQuery(() => db.customers.toArray());
   const suppliers = useLiveQuery(() => db.suppliers.toArray());
@@ -65,45 +67,72 @@ export function CRMView({ lang, t }: CRMViewProps) {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const data = {
-      name: formData.get('name') as string,
-      phone: formData.get('phone') as string,
-      email: formData.get('email') as string,
-      address: formData.get('address') as string,
-    };
-    
-    if (activeTab === 'Customers') {
-      if (editingContact) {
-        await db.customers.update(editingContact.id!, { ...data });
-      } else {
-        await db.customers.add({
-          ...data as any,
-          totalSpent: 0,
-          totalPaid: 0,
-          lastVisit: Date.now()
-        });
-      }
-    } else {
-      if (editingContact) {
-        await db.suppliers.update(editingContact.id!, { 
-          ...data,
-          contactName: formData.get('contactName') as string 
-        });
-      } else {
-        await db.suppliers.add({
-          ...data,
-          contactName: formData.get('contactName') as string
-        });
-      }
+    const name = (formData.get('name') as string)?.trim();
+    const phone = (formData.get('phone') as string)?.trim();
+    const email = (formData.get('email') as string)?.trim() || undefined;
+    const address = (formData.get('address') as string)?.trim() || undefined;
+
+    if (!name || !phone) {
+      alert(lang === 'en' ? 'Name and phone are required.' : 'الاسم والهاتف مطلوبان.');
+      return;
     }
-    setShowModal(false);
-    setEditingContact(null);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert(lang === 'en' ? 'Invalid email address.' : 'بريد إلكتروني غير صالح.');
+      return;
+    }
+
+    const data = { name, phone, email, address };
+
+    try {
+      if (activeTab === 'Customers') {
+        if (editingContact) {
+          await db.customers.update(editingContact.id!, data);
+        } else {
+          await db.customers.add({
+            ...data,
+            totalSpent: 0,
+            totalPaid: 0,
+            lastVisit: Date.now()
+          });
+        }
+      } else {
+        const contactName = (formData.get('contactName') as string)?.trim() || undefined;
+        if (editingContact) {
+          await db.suppliers.update(editingContact.id!, { ...data, contactName });
+        } else {
+          await db.suppliers.add({ ...data, contactName });
+        }
+      }
+      setShowModal(false);
+      setEditingContact(null);
+    } catch (err) {
+      console.error(err);
+      alert(lang === 'en' ? 'Failed to save contact.' : 'فشل حفظ جهة الاتصال.');
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm(lang === 'en' ? 'Are you sure?' : 'هل أنت متأكد؟')) {
-      if (activeTab === 'Customers') await db.customers.delete(id);
-      else await db.suppliers.delete(id);
+    const msg = activeTab === 'Customers'
+      ? (lang === 'en' ? 'Delete this customer and all related sales/payments?' : 'حذف هذا العميل وجميع مبيعاته/دفعاته؟')
+      : (lang === 'en' ? 'Delete this supplier and all related purchases?' : 'حذف هذا المورد وجميع مشترياته؟');
+    if (!confirm(msg)) return;
+
+    try {
+      if (activeTab === 'Customers') {
+        await db.transaction('rw', [db.customers, db.sales, db.payments], async () => {
+          await db.sales.where('customerId').equals(id).delete();
+          await db.payments.where('customerId').equals(id).delete();
+          await db.customers.delete(id);
+        });
+      } else {
+        await db.transaction('rw', [db.suppliers, db.purchases], async () => {
+          await db.purchases.where('supplierId').equals(id).delete();
+          await db.suppliers.delete(id);
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      alert(lang === 'en' ? 'Failed to delete.' : 'فشل الحذف.');
     }
   };
 
@@ -393,16 +422,18 @@ export function CRMView({ lang, t }: CRMViewProps) {
                         <div className="space-y-4">
                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-1">{editingPayment ? (lang === 'en' ? 'Edit Payment' : 'تعديل الدفعة') : (lang === 'en' ? 'Quick Record Payment' : 'تسجيل دفعة سريعة')}</p>
                            <div className="flex flex-wrap gap-3">
-                              <input 
+                              <input
                                  type="number"
-                                 id="paymentAmount"
+                                 ref={amountInputRef}
                                  key={editingPayment?.id || 'new'}
                                  defaultValue={editingPayment?.amount || ''}
+                                 min={0}
+                                 step="0.01"
                                  placeholder={lang === 'en' ? 'Amount' : 'المبلغ'}
                                  className="flex-1 min-w-[120px] bg-white border border-gray-100 rounded-xl px-4 py-2 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-green/5 transition-all"
                               />
-                              <select 
-                                id="paymentMethod"
+                              <select
+                                ref={methodSelectRef}
                                 defaultValue={editingPayment?.method || 'Cash'}
                                 className="bg-white border border-gray-100 rounded-xl px-4 py-2 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-green/5 transition-all"
                               >
@@ -410,14 +441,19 @@ export function CRMView({ lang, t }: CRMViewProps) {
                                 <option value="Card">Card</option>
                                 <option value="Transfer">Transfer</option>
                               </select>
-                              <button 
+                              <button
                                  onClick={async () => {
-                                    const amountInput = document.getElementById('paymentAmount') as HTMLInputElement;
-                                    const methodInput = document.getElementById('paymentMethod') as HTMLSelectElement;
+                                    const amountInput = amountInputRef.current;
+                                    const methodInput = methodSelectRef.current;
+                                    if (!amountInput || !methodInput) return;
                                     const amount = parseFloat(amountInput.value);
                                     const method = methodInput.value as 'Cash' | 'Card' | 'Transfer';
-                                    
-                                    if (amount > 0) {
+
+                                    if (!Number.isFinite(amount) || amount <= 0) {
+                                      alert(lang === 'en' ? 'Enter a positive amount.' : 'أدخل مبلغاً موجباً.');
+                                      return;
+                                    }
+                                    try {
                                        if (editingPayment) {
                                           await db.transaction('rw', [db.payments, db.customers], async () => {
                                              await db.payments.update(editingPayment.id!, { amount, method });
@@ -429,17 +465,20 @@ export function CRMView({ lang, t }: CRMViewProps) {
                                        } else {
                                           await db.transaction('rw', [db.payments, db.customers], async () => {
                                              await db.payments.add({
-                                                customerId: viewingDetails.id!,
+                                                customerId: viewingDetails!.id!,
                                                 amount,
                                                 date: Date.now(),
                                                 method
                                              });
                                              const updatedPaid = (viewingDetails as Customer).totalPaid + amount;
-                                             await db.customers.update(viewingDetails.id!, { totalPaid: updatedPaid });
+                                             await db.customers.update(viewingDetails!.id!, { totalPaid: updatedPaid });
                                              setViewingDetails({ ...viewingDetails, totalPaid: updatedPaid } as Customer);
                                              amountInput.value = '';
                                           });
                                        }
+                                    } catch (err) {
+                                      console.error(err);
+                                      alert(lang === 'en' ? 'Failed to save payment.' : 'فشل حفظ الدفعة.');
                                     }
                                  }}
                                  className="bg-apple-green text-white px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-apple-green/20 hover:scale-[1.03] active:scale-95 transition-all"

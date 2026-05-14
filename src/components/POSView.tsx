@@ -3,13 +3,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, ShoppingCart, Trash2, Plus, Minus, CreditCard, User, History, Printer, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../db';
-import type { Language, InventoryItem, Customer, Sale } from '../types';
+import type { Language, InventoryItem, Sale, TranslationStrings } from '../types';
 import { cn } from '../lib/utils';
 import { InvoicePrinter } from './InvoicePrinter';
 
 interface POSViewProps {
   lang: Language;
-  t: any;
+  t: TranslationStrings;
 }
 
 export function POSView({ lang, t }: POSViewProps) {
@@ -67,6 +67,24 @@ export function POSView({ lang, t }: POSViewProps) {
   const handleCheckout = async () => {
     if (cart.length === 0) return;
 
+    // Validate Partial payment amount
+    if (paymentMethod === 'Partial') {
+      if (!Number.isFinite(amountPaid) || amountPaid <= 0) {
+        alert(lang === 'en' ? 'Enter a valid amount paid.' : 'أدخل مبلغاً مدفوعاً صالحاً.');
+        return;
+      }
+      if (amountPaid > total) {
+        alert(lang === 'en' ? 'Amount paid cannot exceed total.' : 'المبلغ المدفوع لا يمكن أن يتجاوز الإجمالي.');
+        return;
+      }
+    }
+
+    // Credit sales require an identified customer for receivables tracking
+    if (paymentMethod === 'Credit' && !selectedCustomerId) {
+      alert(lang === 'en' ? 'Credit sale requires a customer.' : 'البيع الآجل يتطلب اختيار عميل.');
+      return;
+    }
+
     const finalAmountPaid = paymentMethod === 'Cash' || paymentMethod === 'Card' ? total : (paymentMethod === 'Credit' ? 0 : amountPaid);
 
     const sale: Sale = {
@@ -86,15 +104,19 @@ export function POSView({ lang, t }: POSViewProps) {
 
     try {
       await db.transaction('rw', db.items, db.sales, db.customers, async () => {
-        // Update Inventory
+        // Update Inventory with concurrency-safe re-check
         for (const cartItem of cart) {
           const dbItem = await db.items.get(cartItem.item.id!);
-          if (dbItem) {
-            await db.items.update(cartItem.item.id!, {
-              quantity: dbItem.quantity - cartItem.qty,
-              lastUpdated: Date.now()
-            });
+          if (!dbItem) {
+            throw new Error(`Item ${cartItem.item.id} no longer exists`);
           }
+          if (dbItem.quantity < cartItem.qty) {
+            throw new Error(`Insufficient stock for "${dbItem.name}" (have ${dbItem.quantity}, need ${cartItem.qty})`);
+          }
+          await db.items.update(cartItem.item.id!, {
+            quantity: dbItem.quantity - cartItem.qty,
+            lastUpdated: Date.now()
+          });
         }
         // Save Sale
         const saleId = await db.sales.add(sale);
@@ -119,7 +141,8 @@ export function POSView({ lang, t }: POSViewProps) {
       setShowPrintModal(true);
     } catch (err) {
       console.error(err);
-      alert(lang === 'en' ? 'Checkout failed' : 'فشلت عملية الدفع');
+      const msg = err instanceof Error ? err.message : '';
+      alert((lang === 'en' ? 'Checkout failed' : 'فشلت عملية الدفع') + (msg ? `: ${msg}` : ''));
     }
   };
 
@@ -270,7 +293,13 @@ export function POSView({ lang, t }: POSViewProps) {
                   <input
                     type="number"
                     value={amountPaid}
-                    onChange={e => setAmountPaid(parseFloat(e.target.value) || 0)}
+                    min={0}
+                    max={total}
+                    step="0.01"
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      setAmountPaid(Number.isFinite(v) && v >= 0 ? v : 0);
+                    }}
                     className="w-full bg-white border border-apple-blue/20 rounded-xl py-2 px-4 text-sm font-black focus:ring-4 focus:ring-apple-blue/5 outline-none transition-all"
                   />
                 </div>

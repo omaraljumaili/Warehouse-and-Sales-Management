@@ -69,8 +69,28 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onA
     }
   }, [editingItem, isOpen]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Numeric validation
+    if (formData.quantity < 0 || formData.minQuantity < 0 || formData.price < 0 || formData.costPrice < 0) {
+      alert(lang === 'en' ? 'Quantities and prices must be non-negative.' : 'الكميات والأسعار يجب أن تكون غير سالبة.');
+      return;
+    }
+    if (!Number.isFinite(formData.price) || !Number.isFinite(formData.costPrice)) {
+      alert(lang === 'en' ? 'Invalid price.' : 'سعر غير صالح.');
+      return;
+    }
+
+    // Barcode uniqueness check
+    if (formData.barcode) {
+      const existing = await db.items.where('barcode').equals(formData.barcode).first();
+      if (existing && existing.id !== editingItem?.id) {
+        alert(lang === 'en' ? 'Barcode already used by another item.' : 'الباركود مستخدم بواسطة قطعة أخرى.');
+        return;
+      }
+    }
+
     onAdd(editingItem ? { ...editingItem, ...formData } : formData);
     onClose();
   };
@@ -285,6 +305,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, onA
                   quantity: existingItem.quantity,
                   minQuantity: existingItem.minQuantity,
                   price: existingItem.price,
+                  costPrice: existingItem.costPrice || 0,
                   tags: existingItem.tags || [],
                   barcode: existingItem.barcode || decodedText,
                   manufacturer: existingItem.manufacturer || '',

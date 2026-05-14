@@ -12,12 +12,25 @@ interface SettingsViewProps {
 export function SettingsView({ lang, onLangToggle }: SettingsViewProps) {
   const handleWipeData = async () => {
     if (confirm(lang === 'en' ? 'CRITICAL: This will delete ALL business data permanently. Are you sure?' : 'خطر: هذا سيحذف جميع بيانات المؤسسة بشكل نهائي. هل أنت متأكد؟')) {
-      await db.items.clear();
-      await db.sales.clear();
-      await db.purchases.clear();
-      await db.customers.clear();
-      await db.suppliers.clear();
-      window.location.reload();
+      try {
+        await db.transaction('rw',
+          [db.items, db.sales, db.purchases, db.customers, db.suppliers, db.payments],
+          async () => {
+            await Promise.all([
+              db.items.clear(),
+              db.sales.clear(),
+              db.purchases.clear(),
+              db.customers.clear(),
+              db.suppliers.clear(),
+              db.payments.clear(),
+            ]);
+          }
+        );
+        window.location.reload();
+      } catch (err) {
+        console.error(err);
+        alert(lang === 'en' ? 'Failed to wipe database.' : 'فشل مسح قاعدة البيانات.');
+      }
     }
   };
 
@@ -28,7 +41,8 @@ export function SettingsView({ lang, onLangToggle }: SettingsViewProps) {
       purchases: await db.purchases.toArray(),
       customers: await db.customers.toArray(),
       suppliers: await db.suppliers.toArray(),
-      version: '1.0',
+      payments: await db.payments.toArray(),
+      version: '1.1',
       exportDate: Date.now()
     };
     
@@ -45,33 +59,52 @@ export function SettingsView({ lang, onLangToggle }: SettingsViewProps) {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0];
+    input.onchange = async (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
       if (!file) return;
-      
+
       const reader = new FileReader();
-      reader.onload = async (event: any) => {
+      reader.onload = async (event: ProgressEvent<FileReader>) => {
         try {
-          const data = JSON.parse(event.target.result);
+          const raw = event.target?.result;
+          if (typeof raw !== 'string') throw new Error('Unreadable file');
+          const data = JSON.parse(raw);
+
+          // Schema validation: each section must be an array if present
+          const sections = ['items', 'sales', 'purchases', 'customers', 'suppliers', 'payments'] as const;
+          if (typeof data !== 'object' || data === null) throw new Error('Not an object');
+          for (const key of sections) {
+            if (data[key] !== undefined && !Array.isArray(data[key])) {
+              throw new Error(`Field "${key}" must be an array`);
+            }
+          }
+
           if (confirm(lang === 'en' ? 'This will overwrite existing data. Proceed?' : 'سيقوم هذا الكتابة فوق البيانات الحالية. هل تريد الاستمرار؟')) {
-             await db.transaction('rw', [db.items, db.sales, db.purchases, db.customers, db.suppliers], async () => {
-                await Promise.all([
-                  db.items.clear(),
-                  db.sales.clear(),
-                  db.purchases.clear(),
-                  db.customers.clear(),
-                  db.suppliers.clear()
-                ]);
-                if (data.items) await db.items.bulkAdd(data.items);
-                if (data.sales) await db.sales.bulkAdd(data.sales);
-                if (data.purchases) await db.purchases.bulkAdd(data.purchases);
-                if (data.customers) await db.customers.bulkAdd(data.customers);
-                if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
-             });
+             await db.transaction('rw',
+               [db.items, db.sales, db.purchases, db.customers, db.suppliers, db.payments],
+               async () => {
+                  await Promise.all([
+                    db.items.clear(),
+                    db.sales.clear(),
+                    db.purchases.clear(),
+                    db.customers.clear(),
+                    db.suppliers.clear(),
+                    db.payments.clear(),
+                  ]);
+                  if (data.items) await db.items.bulkAdd(data.items);
+                  if (data.sales) await db.sales.bulkAdd(data.sales);
+                  if (data.purchases) await db.purchases.bulkAdd(data.purchases);
+                  if (data.customers) await db.customers.bulkAdd(data.customers);
+                  if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
+                  if (data.payments) await db.payments.bulkAdd(data.payments);
+               }
+             );
              window.location.reload();
           }
         } catch (err) {
-          alert('Invalid backup file');
+          console.error(err);
+          alert(lang === 'en' ? `Invalid backup file: ${(err as Error).message}` : `ملف نسخ احتياطي غير صالح: ${(err as Error).message}`);
         }
       };
       reader.readAsText(file);

@@ -36,12 +36,32 @@ export class InventoryDatabase extends Dexie {
     this.version(4).stores({
       customers: '++id, name, phone, lastVisit, totalPaid',
       sales: '++id, customerId, date, amountPaid, paymentMethod'
-    }).upgrade(tx => {
-       console.log("Upgrading to version 4 (Payment Tracking)...");
+    }).upgrade(async tx => {
+      // Backfill totalPaid for existing customers to avoid undefined in arithmetic
+      await tx.table('customers').toCollection().modify((c: any) => {
+        if (typeof c.totalPaid !== 'number') c.totalPaid = c.totalSpent ?? 0;
+        if (typeof c.totalSpent !== 'number') c.totalSpent = 0;
+      });
+      await tx.table('sales').toCollection().modify((s: any) => {
+        if (typeof s.amountPaid !== 'number') s.amountPaid = s.totalAmount ?? 0;
+        if (!s.paymentMethod) s.paymentMethod = 'Cash';
+      });
     });
     // Version 5: Payment records
     this.version(5).stores({
       payments: '++id, customerId, date'
+    });
+    // Version 6: Indexed barcode for uniqueness checks
+    this.version(6).stores({
+      items: '++id, name, nameAr, category, quantity, lastUpdated, &barcode, manufacturer, supplier'
+    }).upgrade(async tx => {
+      // Ensure no duplicate barcodes remain; clear duplicates' barcode field
+      const seen = new Set<string>();
+      await tx.table('items').toCollection().modify((i: any) => {
+        if (!i.barcode) return;
+        if (seen.has(i.barcode)) i.barcode = undefined;
+        else seen.add(i.barcode);
+      });
     });
   }
 }
