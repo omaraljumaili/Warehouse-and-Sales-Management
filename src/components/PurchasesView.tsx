@@ -13,7 +13,17 @@ interface PurchasesViewProps {
 export function PurchasesView({ lang, t }: PurchasesViewProps) {
   const items = useLiveQuery(() => db.items.toArray());
   const suppliers = useLiveQuery(() => db.suppliers.toArray());
-  
+  const settings = useLiveQuery(() => db.settings.get('current'));
+  const currency = settings?.currency || 'د.ع';
+
+  const formatCurrency = (val: number) => {
+    const formatted = val.toLocaleString(undefined, { 
+      minimumFractionDigits: currency === 'د.ع' ? 0 : 2,
+      maximumFractionDigits: currency === 'د.ع' ? 0 : 2 
+    });
+    return lang === 'ar' ? `${formatted} ${currency}` : `${currency}${formatted}`;
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -33,7 +43,7 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
     setOrderItems(prev => {
       const existing = prev.find(i => i.itemId === item.id);
       if (existing) return prev;
-      return [...prev, { itemId: item.id!, name: lang === 'en' ? item.name : item.nameAr, quantity: 1, costPrice: item.costPrice || (item.price * 0.6) }];
+      return [...prev, { itemId: item.id!, name: (lang === 'ar' && item.nameAr ? item.nameAr : item.name), quantity: 1, costPrice: item.costPrice || (item.price * 0.6) }];
     });
   };
 
@@ -51,7 +61,7 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
 
   const handleSavePurchase = async () => {
     if (orderItems.length === 0 || !invoiceNumber) {
-      alert(lang === 'en' ? 'Please add items and invoice number' : 'يرجى إضافة قطع ورقم الفاتورة');
+      alert(tp.validationError);
       return;
     }
 
@@ -65,15 +75,31 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
     };
 
     try {
-      await db.transaction('rw', db.items, db.purchases, async () => {
+      await db.transaction('rw', [db.items, db.purchases, db.warehouses, db.warehouseStocks], async () => {
+        const mainWarehouse = await db.warehouses.where('isMain').equals(1).first();
+        
         for (const orderItem of orderItems) {
           const dbItem = await db.items.get(orderItem.itemId);
           if (dbItem) {
+            const newQty = dbItem.quantity + orderItem.quantity;
             await db.items.update(orderItem.itemId, {
-              quantity: dbItem.quantity + orderItem.quantity,
+              quantity: newQty,
               costPrice: orderItem.costPrice, // Update cost price as well if changed
               lastUpdated: Date.now()
             });
+
+            if (mainWarehouse) {
+              const ws = await db.warehouseStocks.get([orderItem.itemId, mainWarehouse.id!]);
+              if (ws) {
+                await db.warehouseStocks.put({ ...ws, quantity: ws.quantity + orderItem.quantity });
+              } else {
+                await db.warehouseStocks.put({ 
+                  itemId: orderItem.itemId, 
+                  warehouseId: mainWarehouse.id!, 
+                  quantity: newQty 
+                });
+              }
+            }
           }
         }
         await db.purchases.add(purchase);
@@ -81,24 +107,26 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
       setOrderItems([]);
       setInvoiceNumber('');
       setSelectedSupplierId(null);
-      alert(lang === 'en' ? 'Purchases saved and stock updated!' : 'تم حفظ المشتريات وتحديث المخزون!');
+      alert(tp.saveSuccess);
     } catch (err) {
       console.error(err);
       alert('Error saving purchase');
     }
   };
 
+  const tp = t.purchases;
+
   return (
-    <div className="flex h-full gap-8">
+    <div className="flex flex-col xl:flex-row h-full gap-8 overflow-y-auto xl:overflow-hidden pb-10 xl:pb-0">
       {/* Search & Stock Table */}
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-black text-apple-dark-blue flex items-center gap-3">
               <PackagePlus size={32} className="text-apple-blue" />
-              {t.purchases.title}
+              {tp.title}
             </h2>
-            <p className="text-sm text-apple-gray font-medium mt-1">Register new stock arrival from suppliers</p>
+            <p className="text-sm text-apple-gray font-medium mt-1">{tp.subtitle}</p>
           </div>
         </div>
 
@@ -107,7 +135,7 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
              <div className="relative flex-1 group">
                 <input
                   type="text"
-                  placeholder={lang === 'en' ? 'Search items to add...' : 'ابحث عن قطع لإضافتها...'}
+                  placeholder={tp.searchItems}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-3 px-12 text-sm focus:outline-none focus:ring-4 focus:ring-apple-blue/10 transition-all font-medium"
@@ -140,65 +168,67 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
              </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="flex-1 overflow-x-auto custom-scrollbar">
             {orderItems.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center py-20 text-center">
                 <div className="w-20 h-20 bg-apple-bg rounded-full flex items-center justify-center text-gray-300 mb-4 ring-1 ring-gray-100">
                   <PackagePlus size={40} />
                 </div>
-                <h3 className="font-bold text-apple-dark-blue">{lang === 'en' ? 'Start Entry' : 'ابدأ الإدخال'}</h3>
-                <p className="text-xs text-gray-400 mt-1">Add items to receive from the search bar above</p>
+                <h3 className="font-bold text-apple-dark-blue">{tp.startEntry}</h3>
+                <p className="text-xs text-gray-400 mt-1">{tp.addInstruction}</p>
               </div>
             ) : (
-              <table className="w-full text-left">
-                <thead className="bg-gray-50/50 sticky top-0 z-10">
-                  <tr className="text-[10px] uppercase tracking-widest text-gray-400 font-black">
-                    <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{lang === 'en' ? 'Item' : 'القطعة'}</th>
-                    <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{lang === 'en' ? 'Cost Price' : 'سعر التكلفة'}</th>
-                    <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{lang === 'en' ? 'Quantity' : 'الكمية'}</th>
-                    <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{lang === 'en' ? 'Total' : 'المجموع'}</th>
-                    <th className="px-8 py-4"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {orderItems.map(item => (
-                    <tr key={item.itemId} className="group hover:bg-gray-50/50 transition-colors">
-                      <td className={cn("px-8 py-6 font-bold text-apple-dark-blue", lang === 'ar' && "text-right")}>{item.name}</td>
-                      <td className="px-8 py-6">
-                        <input
-                          type="number"
-                          value={item.costPrice}
-                          onChange={e => updateItem(item.itemId, 'costPrice', Number(e.target.value))}
-                          className={cn("w-20 bg-white border border-gray-200 rounded-lg py-1.5 px-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-apple-blue/20", lang === 'ar' && "text-right")}
-                        />
-                      </td>
-                      <td className="px-8 py-6">
-                        <input
-                          type="number"
-                          value={item.quantity}
-                          onChange={e => updateItem(item.itemId, 'quantity', Number(e.target.value))}
-                          className={cn("w-20 bg-white border border-gray-200 rounded-lg py-1.5 px-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-apple-blue/20", lang === 'ar' && "text-right")}
-                        />
-                      </td>
-                      <td className={cn("px-8 py-6 font-black text-apple-blue", lang === 'ar' && "text-right")}>
-                        {(item.costPrice * item.quantity).toFixed(2)}
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                        <button onClick={() => removeItem(item.itemId)} className="p-2 text-gray-300 hover:text-red-500 transition-colors">
-                          <Trash2 size={18} />
-                        </button>
-                      </td>
+              <div className="min-w-[600px]">
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50/50 sticky top-0 z-10">
+                    <tr className="text-[10px] uppercase tracking-widest text-gray-400 font-black">
+                      <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{tp.itemCol}</th>
+                      <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{tp.costCol}</th>
+                      <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{tp.qtyCol}</th>
+                      <th className={cn("px-8 py-4", lang === 'ar' && "text-right")}>{tp.totalCol}</th>
+                      <th className="px-8 py-4"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {orderItems.map(item => (
+                      <tr key={item.itemId} className="group hover:bg-gray-50/50 transition-colors">
+                        <td className={cn("px-8 py-6 font-bold text-apple-dark-blue", lang === 'ar' && "text-right")}>{item.name}</td>
+                        <td className="px-8 py-6">
+                          <input
+                            type="number"
+                            value={item.costPrice}
+                            onChange={e => updateItem(item.itemId, 'costPrice', Number(e.target.value))}
+                            className={cn("w-20 bg-white border border-gray-200 rounded-lg py-1.5 px-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-apple-blue/20", lang === 'ar' && "text-right")}
+                          />
+                        </td>
+                        <td className="px-8 py-6">
+                          <input
+                            type="number"
+                            value={item.quantity}
+                            onChange={e => updateItem(item.itemId, 'quantity', Number(e.target.value))}
+                            className={cn("w-20 bg-white border border-gray-200 rounded-lg py-1.5 px-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-apple-blue/20", lang === 'ar' && "text-right")}
+                          />
+                        </td>
+                        <td className={cn("px-8 py-6 font-black text-apple-blue", lang === 'ar' && "text-right")}>
+                          {formatCurrency(item.costPrice * item.quantity)}
+                        </td>
+                        <td className="px-8 py-6 text-right">
+                          <button onClick={() => removeItem(item.itemId)} className="p-2 text-gray-300 hover:text-red-500 transition-colors">
+                            <Trash2 size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
           <div className="p-8 bg-apple-dark-blue flex items-center justify-between text-white">
             <div>
-              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">{lang === 'en' ? 'Grand Total' : 'إجمالي الفاتورة'}</p>
-              <p className="text-4xl font-black">${total.toLocaleString()}</p>
+              <p className="text-[10px] font-black text-white/40 uppercase tracking-widest mb-1">{tp.grandTotal}</p>
+              <p className="text-4xl font-black">{formatCurrency(total)}</p>
             </div>
             <button 
               onClick={handleSavePurchase}
@@ -206,18 +236,18 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
               className="px-10 h-16 rounded-2xl bg-apple-blue text-white font-black uppercase tracking-widest flex items-center gap-3 shadow-2xl shadow-black/20 hover:scale-[1.03] active:scale-95 disabled:opacity-40 transition-all"
             >
               <Save size={24} />
-              {t.purchases.addStock}
+              {tp.addStock}
             </button>
           </div>
         </div>
       </div>
 
       {/* Suggested Items Sider */}
-      <div className="w-80 flex flex-col gap-6">
-        <div className="bg-white rounded-[32px] border border-gray-200 p-6 flex-1 flex flex-col overflow-hidden">
+      <div className="w-full xl:w-80 flex flex-col gap-6 shrink-0">
+        <div className="bg-white rounded-[32px] border border-gray-200 p-6 flex-1 flex flex-col overflow-hidden min-h-[300px]">
           <h3 className="font-black text-apple-dark-blue flex items-center gap-2 mb-6">
             <Plus size={18} className="text-apple-blue" />
-            {lang === 'en' ? 'Quick Add' : 'إضافة سريعة'}
+            {tp.quickAdd}
           </h3>
           <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1">
             {filteredItems.slice(0, 15).map(item => (
@@ -231,8 +261,8 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
                     <Plus size={18} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-apple-dark-blue text-xs truncate">{lang === 'en' ? item.name : item.nameAr}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">Quantity: {item.quantity}</p>
+                    <p className="font-bold text-apple-dark-blue text-xs truncate">{(lang === 'ar' && item.nameAr) ? item.nameAr : item.name}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{t.quantity}: {item.quantity}</p>
                   </div>
                 </div>
               </button>
