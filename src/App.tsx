@@ -221,11 +221,41 @@ export default function App() {
     }
   };
 
-  const handleDeleteItem = async (id: number) => {
-    if (confirm(t.crm.confirmDelete)) {
-      await db.items.delete(id);
-    }
-  };
+ const handleDeleteItem = async (id: number) => {
+
+  // Block deletion if the item is referenced by historical sales or purchases
+
+  const [salesUsing, purchasesUsing] = await Promise.all([
+
+    db.sales.filter(s => s.items.some(it => it.itemId === id)).count(),
+
+    db.purchases.filter(p => p.items.some(it => it.itemId === id)).count(),
+
+  ]);
+
+  if (salesUsing > 0 || purchasesUsing > 0) {
+
+    alert(
+
+      lang === 'en'
+
+        ? `Cannot delete: item is used in ${salesUsing} sales and ${purchasesUsing} purchases.`
+
+        : `لا يمكن الحذف: القطعة مستخدمة في ${salesUsing} مبيعات و ${purchasesUsing} مشتريات.`
+
+    );
+
+    return;
+
+  }
+
+  if (confirm(t.crm.confirmDelete)) {
+
+    await db.items.delete(id);
+
+  }
+
+};
 
   const handleArchiveItem = async (id: number, archived: boolean) => {
     await db.items.update(id, { archived });

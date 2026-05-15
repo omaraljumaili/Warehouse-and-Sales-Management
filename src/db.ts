@@ -52,6 +52,18 @@ export class InventoryDatabase extends Dexie {
       settings: 'id',
       expenses: '++id, date, category'
     });
+    // Version 6: Indexed barcode for uniqueness checks
+    this.version(6).stores({
+      items: '++id, name, nameAr, category, quantity, lastUpdated, &barcode, manufacturer, supplier'
+    }).upgrade(async tx => {
+      // Ensure no duplicate barcodes remain; clear duplicates' barcode field
+      const seen = new Set<string>();
+      await tx.table('items').toCollection().modify((i: any) => {
+        if (!i.barcode) return;
+        if (seen.has(i.barcode)) i.barcode = undefined;
+        else seen.add(i.barcode);
+      });
+    });
   }
 }
 

@@ -2,12 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search, PackagePlus, Truck, FileText, Plus, Save, Trash2 } from 'lucide-react';
 import { db } from '../db';
-import type { Language, InventoryItem, Supplier, Purchase } from '../types';
+import type { Language, InventoryItem, Purchase, TranslationStrings } from '../types';
 import { cn } from '../lib/utils';
 
 interface PurchasesViewProps {
   lang: Language;
-  t: any;
+  t: TranslationStrings;
 }
 
 export function PurchasesView({ lang, t }: PurchasesViewProps) {
@@ -62,6 +62,11 @@ export function PurchasesView({ lang, t }: PurchasesViewProps) {
   const handleSavePurchase = async () => {
     if (orderItems.length === 0 || !invoiceNumber) {
       alert(tp.validationError);
+      return;
+    }
+    const invalid = orderItems.find(i => i.quantity <= 0 || i.costPrice < 0);
+    if (invalid) {
+      alert(lang === 'en' ? 'All items need a positive quantity and non-negative cost.' : 'كل القطع تحتاج كمية موجبة وتكلفة غير سالبة.');
       return;
     }
 

@@ -47,7 +47,8 @@ export function SettingsView({ lang, t, onLangToggle }: SettingsViewProps) {
       purchases: await db.purchases.toArray(),
       customers: await db.customers.toArray(),
       suppliers: await db.suppliers.toArray(),
-      version: '1.0',
+      payments: await db.payments.toArray(),
+      version: '1.1',
       exportDate: Date.now()
     };
     
@@ -64,12 +65,13 @@ export function SettingsView({ lang, t, onLangToggle }: SettingsViewProps) {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0];
+    input.onchange = async (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
       if (!file) return;
-      
+
       const reader = new FileReader();
-      reader.onload = async (event: any) => {
+      reader.onload = async (event: ProgressEvent<FileReader>) => {
         try {
           const data = JSON.parse(event.target.result);
           if (confirm(ts.importConfirm)) {
