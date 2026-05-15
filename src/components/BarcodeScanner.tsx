@@ -6,6 +6,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { X } from 'lucide-react';
+import { translations } from '../translations';
 
 interface BarcodeScannerProps {
   onScan: (decodedText: string) => void;
@@ -15,6 +16,7 @@ interface BarcodeScannerProps {
 
 export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose, lang }) => {
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const t = translations[lang];
 
   useEffect(() => {
     const scanner = new Html5QrcodeScanner(
@@ -42,7 +44,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose,
       <div className="w-full max-w-lg bg-white rounded-[32px] overflow-hidden shadow-2xl border border-gray-100 italic">
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <h3 className="font-bold text-apple-dark-blue">
-            {lang === 'en' ? 'Scan Barcode' : 'مسح الباركود'}
+            {t.barcode.scan}
           </h3>
           <button 
             onClick={onClose}
@@ -54,7 +56,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose,
         <div id="barcode-reader" className="w-full" />
         <div className="p-4 flex justify-center">
           <p className="text-[10px] uppercase font-black tracking-widest text-apple-gray animate-pulse">
-            {lang === 'en' ? 'Align barcode within the frame' : 'قم بمحاذاة الباركود داخل الإطار'}
+            {t.barcode.align}
           </p>
         </div>
       </div>

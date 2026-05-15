@@ -4,7 +4,12 @@
  */
 
 import Dexie, { type Table } from 'dexie';
-import type { InventoryItem, Customer, Supplier, Sale, Purchase, Payment } from './types';
+import type { 
+  InventoryItem, Customer, Supplier, Sale, Purchase, Payment, 
+  Warehouse, StockTransfer, Category, Brand, Unit, 
+  CashShift, CashEntry, SuspendedSale, WarehouseStock, AppSettings,
+  Expense
+} from './types';
 
 export class InventoryDatabase extends Dexie {
   items!: Table<InventoryItem>;
@@ -13,43 +18,39 @@ export class InventoryDatabase extends Dexie {
   sales!: Table<Sale>;
   purchases!: Table<Purchase>;
   payments!: Table<Payment>;
+  warehouses!: Table<Warehouse>;
+  stockTransfers!: Table<StockTransfer>;
+  categories!: Table<Category>;
+  brands!: Table<Brand>;
+  units!: Table<Unit>;
+  cashShifts!: Table<CashShift>;
+  cashEntries!: Table<CashEntry>;
+  suspendedSales!: Table<SuspendedSale>;
+  warehouseStocks!: Table<WarehouseStock>;
+  settings!: Table<AppSettings>;
+  expenses!: Table<Expense>;
 
   constructor() {
     super('SmartFlowDB');
-    // Version 1 definition
-    this.version(1).stores({
-      items: '++id, name, nameAr, category, quantity, lastUpdated'
-    });
-    // Version 2 definition
-    this.version(2).stores({
-      items: '++id, name, nameAr, category, quantity, lastUpdated, barcode, manufacturer, supplier'
-    });
-    // Version 3: Full POS and Sales support
-    this.version(3).stores({
-      items: '++id, name, nameAr, category, quantity, lastUpdated, barcode, manufacturer, supplier',
+    // Previous versions kept for history or direct set to latest
+    this.version(7).stores({
+      items: '++id, name, nameAr, categoryId, quantity, barcode, archived',
       customers: '++id, name, phone, lastVisit',
       suppliers: '++id, name, phone',
       sales: '++id, customerId, date',
-      purchases: '++id, supplierId, date, invoiceNumber'
-    });
-    // Version 4: Payment tracking
-    this.version(4).stores({
-      customers: '++id, name, phone, lastVisit, totalPaid',
-      sales: '++id, customerId, date, amountPaid, paymentMethod'
-    }).upgrade(async tx => {
-      // Backfill totalPaid for existing customers to avoid undefined in arithmetic
-      await tx.table('customers').toCollection().modify((c: any) => {
-        if (typeof c.totalPaid !== 'number') c.totalPaid = c.totalSpent ?? 0;
-        if (typeof c.totalSpent !== 'number') c.totalSpent = 0;
-      });
-      await tx.table('sales').toCollection().modify((s: any) => {
-        if (typeof s.amountPaid !== 'number') s.amountPaid = s.totalAmount ?? 0;
-        if (!s.paymentMethod) s.paymentMethod = 'Cash';
-      });
-    });
-    // Version 5: Payment records
-    this.version(5).stores({
-      payments: '++id, customerId, date'
+      purchases: '++id, supplierId, date, invoiceNumber',
+      payments: '++id, customerId, date',
+      warehouses: '++id, name, isMain',
+      stockTransfers: '++id, fromWarehouseId, toWarehouseId, date',
+      categories: '++id, name, nameAr',
+      brands: '++id, name, nameAr',
+      units: '++id, name, nameAr',
+      cashShifts: '++id, userId, openingDate, status',
+      cashEntries: '++id, shiftId, date, type',
+      suspendedSales: '++id, date',
+      warehouseStocks: '[itemId+warehouseId], itemId, warehouseId',
+      settings: 'id',
+      expenses: '++id, date, category'
     });
     // Version 6: Indexed barcode for uniqueness checks
     this.version(6).stores({
@@ -85,14 +86,37 @@ db.on('blocked', () => {
 // Seed data
 export async function seedDatabase() {
   try {
-    const count = await db.items.count();
-    if (count === 0) {
-      console.log("Seeding database with initial data...");
-      await db.items.bulkAdd([
+    const itemCount = await db.items.count();
+    const warehouseCount = await db.warehouses.count();
+    const categoryCount = await db.categories.count();
+
+    let mainWarehouseId: number | undefined;
+    let catOil: number | undefined;
+    let catFilters: number | undefined;
+    let catBrakes: number | undefined;
+
+    if (warehouseCount === 0) {
+      mainWarehouseId = await db.warehouses.add({ name: 'Main Store', nameAr: 'المخزن الرئيسي', isMain: true }) as number;
+      await db.warehouses.add({ name: 'Retail Outlet', nameAr: 'منفذ البيع', isMain: false });
+    } else {
+      const main = await db.warehouses.where('isMain').equals(1).first();
+      mainWarehouseId = main?.id;
+    }
+
+    if (categoryCount === 0) {
+      catOil = await db.categories.add({ name: 'Oil & Lubricants', nameAr: 'زيوت وتشحيم' }) as number;
+      catFilters = await db.categories.add({ name: 'Filters', nameAr: 'فلاتر' }) as number;
+      catBrakes = await db.categories.add({ name: 'Brake Systems', nameAr: 'نظام الفرامل' }) as number;
+    }
+
+    if (itemCount === 0 && mainWarehouseId && catOil && catFilters && catBrakes) {
+      console.log("Seeding items...");
+      
+      const itemsToAdd = [
         {
           name: 'Synthetic Engine Oil 5W-30',
           nameAr: 'زيت محرك اصطناعي 5W-30',
-          category: 'Oil',
+          categoryId: catOil,
           quantity: 45,
           minQuantity: 10,
           price: 35.0,
@@ -106,7 +130,7 @@ export async function seedDatabase() {
         {
           name: 'Oil Filter Premium',
           nameAr: 'فلتر زيت بريميوم',
-          category: 'Filter',
+          categoryId: catFilters,
           quantity: 120,
           minQuantity: 20,
           price: 12.5,
@@ -120,7 +144,7 @@ export async function seedDatabase() {
         {
           name: 'Brake Pads Set',
           nameAr: 'مجموعة بطانات الفرامل',
-          category: 'Brake',
+          categoryId: catBrakes,
           quantity: 8,
           minQuantity: 15,
           price: 85.0,
@@ -131,7 +155,33 @@ export async function seedDatabase() {
           manufacturer: 'Brembo',
           supplier: 'Performance Parts Co'
         }
-      ]);
+      ];
+
+      for (const item of itemsToAdd) {
+        const id = await db.items.add(item);
+        await db.warehouseStocks.add({
+          itemId: id as number,
+          warehouseId: mainWarehouseId,
+          quantity: item.quantity
+        });
+      }
+    }
+
+    const hasSettings = await db.settings.count();
+    if (hasSettings === 0) {
+      await db.settings.add({
+        id: 'current',
+        companyName: 'SmartFlow Enterprise',
+        companyAddress: 'Dubai, UAE',
+        phone: '+971 50 123 4567',
+        taxNumber: 'TRN-100200300',
+        currency: 'د.ع',
+        taxRate: 5,
+        printFormat: '80mm',
+        usdExchangeRate: 1500,
+        invoiceTitle: 'Tax Invoice',
+        invoiceNote: 'Thank you for your business!'
+      });
     }
   } catch (error) {
     console.error("Failed to seed database:", error);

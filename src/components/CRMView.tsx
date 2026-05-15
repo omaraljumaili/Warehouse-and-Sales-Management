@@ -20,6 +20,10 @@ export function CRMView({ lang, t }: CRMViewProps) {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const amountInputRef = useRef<HTMLInputElement>(null);
   const methodSelectRef = useRef<HTMLSelectElement>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+
+  const settings = useLiveQuery(() => db.settings.get('current'));
+  const currency = settings?.currency || '$';
 
   const customers = useLiveQuery(() => db.customers.toArray());
   const suppliers = useLiveQuery(() => db.suppliers.toArray());
@@ -50,6 +54,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
     if (!list) return [];
     return list.filter(c => 
       c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (c.nameAr && c.nameAr.toLowerCase().includes(searchQuery.toLowerCase())) ||
       c.phone.includes(searchQuery) ||
       (c.email?.toLowerCase().includes(searchQuery.toLowerCase()))
     );
@@ -63,6 +68,8 @@ export function CRMView({ lang, t }: CRMViewProps) {
     }
     setShowModal(true);
   };
+
+  const tc = t.crm;
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -95,6 +102,31 @@ export function CRMView({ lang, t }: CRMViewProps) {
             lastVisit: Date.now()
           });
         }
+    const data = {
+      name: formData.get('name') as string,
+      nameAr: formData.get('nameAr') as string,
+      phone: formData.get('phone') as string,
+      email: formData.get('email') as string,
+      address: formData.get('address') as string,
+    };
+    
+    if (activeTab === 'Customers') {
+      if (editingContact) {
+        await db.customers.update(editingContact.id!, { ...data });
+      } else {
+        await db.customers.add({
+          ...data as any,
+          totalSpent: 0,
+          totalPaid: 0,
+          lastVisit: Date.now()
+        });
+      }
+    } else {
+      if (editingContact) {
+        await db.suppliers.update(editingContact.id!, { 
+          ...data,
+          contactName: formData.get('contactName') as string 
+        });
       } else {
         const contactName = (formData.get('contactName') as string)?.trim() || undefined;
         if (editingContact) {
@@ -133,6 +165,9 @@ export function CRMView({ lang, t }: CRMViewProps) {
     } catch (err) {
       console.error(err);
       alert(lang === 'en' ? 'Failed to delete.' : 'فشل الحذف.');
+    if (confirm(tc.confirmDelete)) {
+      if (activeTab === 'Customers') await db.customers.delete(id);
+      else await db.suppliers.delete(id);
     }
   };
 
@@ -148,7 +183,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
             )}
           >
             <Users size={18} />
-            {t.crm.customers}
+            {tc.customers}
           </button>
           <button 
             onClick={() => { setActiveTab('Suppliers'); setSearchQuery(''); }}
@@ -158,7 +193,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
             )}
           >
             <Truck size={18} />
-            {t.crm.suppliers}
+            {tc.suppliers}
           </button>
         </div>
 
@@ -166,7 +201,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
           <div className="relative flex-1 md:w-64 group">
             <input
               type="text"
-              placeholder={lang === 'en' ? 'Search contacts...' : 'ابحث عن جهات الاتصال...'}
+              placeholder={tc.searchContacts}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-white border border-gray-100 rounded-full py-2.5 px-12 text-sm focus:outline-none focus:ring-4 focus:ring-apple-blue/5 transition-all shadow-sm font-rubik"
@@ -178,7 +213,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
             className="h-11 px-6 rounded-full bg-apple-blue text-white font-black uppercase tracking-widest text-[11px] flex items-center gap-2 shadow-xl shadow-apple-blue/20 hover:scale-[1.03] active:scale-95 transition-all"
           >
             <Plus size={18} />
-            {activeTab === 'Customers' ? t.crm.addCustomer : t.crm.addSupplier}
+            {activeTab === 'Customers' ? tc.addCustomer : tc.addSupplier}
           </button>
         </div>
       </div>
@@ -192,7 +227,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                key={person.id}
+                key={`${activeTab}-${person.id}`}
                 className="bg-white p-6 rounded-[32px] border border-gray-100 shadow-sm group hover:shadow-xl hover:shadow-apple-blue/5 transition-all relative"
               >
                 <div className="flex items-start justify-between mb-6">
@@ -202,12 +237,14 @@ export function CRMView({ lang, t }: CRMViewProps) {
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button 
                       onClick={() => handleOpenModal(person)}
+                      title={tc.editContact}
                       className="p-2 text-gray-300 hover:text-apple-blue transition-colors"
                     >
                       <Edit3 size={18} />
                     </button>
                     <button 
                       onClick={() => handleDelete(person.id!)}
+                      title={t.delete}
                       className="p-2 text-gray-300 hover:text-red-500 transition-colors"
                     >
                       <Trash2 size={18} />
@@ -219,7 +256,9 @@ export function CRMView({ lang, t }: CRMViewProps) {
                   className="cursor-pointer"
                   onClick={() => setViewingDetails(person)}
                 >
-                  <h3 className="text-xl font-bold text-apple-dark-blue mb-4 hover:text-apple-blue transition-colors">{person.name}</h3>
+                  <h3 className="text-xl font-bold text-apple-dark-blue mb-4 hover:text-apple-blue transition-colors">
+                    {lang === 'ar' && person.nameAr ? person.nameAr : person.name}
+                  </h3>
                   
                   <div className="space-y-3">
                     <div className="flex items-center gap-3 text-[13px] text-apple-gray font-medium">
@@ -242,14 +281,14 @@ export function CRMView({ lang, t }: CRMViewProps) {
                           <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-apple-blue">
                             <Hash size={14} />
                           </div>
-                          ${(person as Customer).totalSpent.toLocaleString()} Spent
+                          {currency}{(person as Customer).totalSpent.toLocaleString()} {tc.spent}
                         </div>
                         {((person as Customer).totalSpent - (person as Customer).totalPaid > 0) && (
                           <div className="flex items-center gap-3 text-[13px] text-red-500 font-bold">
                             <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
                               <DollarSign size={14} />
                             </div>
-                            ${((person as Customer).totalSpent - (person as Customer).totalPaid).toLocaleString()} Due
+                            {currency}{((person as Customer).totalSpent - (person as Customer).totalPaid).toLocaleString()} {tc.due}
                           </div>
                         )}
                       </div>
@@ -267,8 +306,8 @@ export function CRMView({ lang, t }: CRMViewProps) {
                 {activeTab === 'Customers' ? <Users size={40} /> : <Truck size={40} />}
              </div>
              <p className="font-bold flex flex-col gap-1">
-                <span>No results found in {activeTab}</span>
-                <span className="text-xs font-normal">Try a different search term or add a new record</span>
+                <span>{tc.noResults} {activeTab === 'Customers' ? tc.customers : tc.suppliers}</span>
+                <span className="text-xs font-normal">{tc.noResultsSub}</span>
              </p>
           </div>
         )}
@@ -287,7 +326,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
               
               <div className="flex items-center justify-between mb-10 relative">
                 <h2 className="text-3xl font-black text-apple-dark-blue">
-                  {editingContact ? (lang === 'en' ? 'Edit Contact' : 'تعديل جهة الاتصال') : (activeTab === 'Customers' ? t.crm.addCustomer : t.crm.addSupplier)}
+                  {editingContact ? tc.editContact : (activeTab === 'Customers' ? tc.addCustomer : tc.addSupplier)}
                 </h2>
                 <button onClick={() => setShowModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
                   <X size={24} className="text-gray-400" />
@@ -297,7 +336,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
               <form onSubmit={handleSubmit} className="space-y-6 relative">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{lang === 'en' ? 'Full Name' : 'الاسم الكامل'}</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.fullName}</label>
                     <input
                       name="name"
                       required
@@ -306,7 +345,15 @@ export function CRMView({ lang, t }: CRMViewProps) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{t.crm.phone}</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.fullNameAr}</label>
+                    <input
+                      name="nameAr"
+                      defaultValue={editingContact?.nameAr}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-6 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-blue/10 transition-all font-rubik"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.phone}</label>
                     <input
                       name="phone"
                       required
@@ -315,7 +362,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{lang === 'en' ? 'Email Address' : 'البريد الإلكتروني'}</label>
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.email}</label>
                     <input
                       name="email"
                       type="email"
@@ -325,7 +372,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
                   </div>
                   {activeTab === 'Suppliers' && (
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{lang === 'en' ? 'Contact Person' : 'شخص التواصل'}</label>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.contactPerson}</label>
                       <input
                         name="contactName"
                         defaultValue={(editingContact as Supplier)?.contactName}
@@ -336,7 +383,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
                 </div>
                 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{lang === 'en' ? 'Physical Address' : 'العنوان'}</label>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.address}</label>
                   <textarea
                     name="address"
                     defaultValue={editingContact?.address}
@@ -350,7 +397,7 @@ export function CRMView({ lang, t }: CRMViewProps) {
                     type="submit"
                     className="w-full py-5 rounded-2xl bg-apple-blue text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-apple-blue/20 hover:scale-[1.02] active:scale-95 transition-all"
                   >
-                    {editingContact ? (lang === 'en' ? 'Update Records' : 'تحديث السجلات') : (lang === 'en' ? 'Create Contact' : 'إنشاء جهة اتصال')}
+                    {editingContact ? tc.updateRecords : tc.createContact}
                   </button>
                 </div>
               </form>
@@ -379,18 +426,20 @@ export function CRMView({ lang, t }: CRMViewProps) {
                   {activeTab === 'Customers' ? <Users size={40} /> : <Truck size={40} />}
                 </div>
                 <div>
-                   <h2 className="text-3xl font-black text-apple-dark-blue leading-tight">{viewingDetails.name}</h2>
+                   <h2 className="text-3xl font-black text-apple-dark-blue leading-tight">
+                     {lang === 'ar' && viewingDetails.nameAr ? viewingDetails.nameAr : viewingDetails.name}
+                   </h2>
                    <div className="flex items-center gap-4 mt-1 text-apple-gray font-bold text-sm">
-                      <span className="flex items-center gap-1"><Phone size={14}/> {viewingDetails.phone}</span>
-                      {viewingDetails.email && <span className="flex items-center gap-1"><Mail size={14}/> {viewingDetails.email}</span>}
+                      <span className="flex items-center gap-1 leading-none"><Phone size={14}/> {viewingDetails.phone}</span>
+                      {viewingDetails.email && <span className="flex items-center gap-1 leading-none"><Mail size={14}/> {viewingDetails.email}</span>}
                    </div>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-1 space-y-8 custom-scrollbar">
+              <div id="details-scroll-container" className="flex-1 overflow-y-auto px-1 space-y-8 custom-scrollbar">
                 {viewingDetails.address && (
                   <div>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 px-1">Location</p>
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 px-1">{tc.address}</p>
                     <div className="bg-gray-50 p-4 rounded-2xl flex items-start gap-3">
                       <MapPin size={18} className="text-apple-blue shrink-0 mt-0.5" />
                       <p className="text-sm font-bold text-apple-dark-blue leading-relaxed">{viewingDetails.address}</p>
@@ -399,19 +448,30 @@ export function CRMView({ lang, t }: CRMViewProps) {
                 )}
 
                 <div>
-                   <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 px-1">
-                      {activeTab === 'Customers' ? 'Account Status' : 'Purchase History'}
-                   </p>
+                   <div className="flex items-center justify-between mb-4 px-1">
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                         {activeTab === 'Customers' ? tc.accountStatus : tc.purchaseHistory}
+                      </p>
+                      {activeTab === 'Customers' && viewingDetails && (
+                        <button 
+                          onClick={() => { setEditingPayment(null); setShowPaymentModal(true); }}
+                          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-apple-green text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-apple-green/20 hover:scale-105 active:scale-95 transition-all"
+                        >
+                          <Plus size={14} />
+                          {tc.recordPayment}
+                        </button>
+                      )}
+                   </div>
                    {activeTab === 'Customers' && viewingDetails && (
                      <div className="bg-apple-bg rounded-3xl p-6 mb-8 border border-gray-100">
-                        <div className="grid grid-cols-3 gap-4 mb-6">
+                        <div className="grid grid-cols-3 gap-4">
                            <div className="text-center">
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Spent</p>
-                              <p className="text-lg font-black text-apple-dark-blue">${(viewingDetails as Customer).totalSpent.toLocaleString()}</p>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{tc.totalSpent}</p>
+                              <p className="text-lg font-black text-apple-dark-blue">{currency}{(viewingDetails as Customer).totalSpent.toLocaleString()}</p>
                            </div>
                            <div className="text-center">
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Paid</p>
-                              <p className="text-lg font-black text-apple-green">${(viewingDetails as Customer).totalPaid.toLocaleString()}</p>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{tc.totalPaid}</p>
+                              <p className="text-lg font-black text-apple-green">{currency}{(viewingDetails as Customer).totalPaid.toLocaleString()}</p>
                            </div>
                            <div className="text-center">
                               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Balance Due</p>
@@ -493,6 +553,8 @@ export function CRMView({ lang, t }: CRMViewProps) {
                                   {lang === 'en' ? 'Cancel' : 'إلغاء'}
                                 </button>
                               )}
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{tc.balanceDue}</p>
+                              <p className="text-lg font-black text-red-500">{currency}{((viewingDetails as Customer).totalSpent - (viewingDetails as Customer).totalPaid).toLocaleString()}</p>
                            </div>
                         </div>
                      </div>
@@ -501,37 +563,59 @@ export function CRMView({ lang, t }: CRMViewProps) {
                       {activeTab === 'Customers' ? (
                         <div className="space-y-6">
                           <div>
-                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-1 mb-3">{lang === 'en' ? 'Payment History' : 'سجل الدفعات'}</p>
+                            <div className="flex items-center justify-between px-1 mb-3">
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{tc.paymentHistory}</p>
+                              <div className="flex items-center gap-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                                <span className="hidden sm:inline">{tc.method}</span>
+                                <span className="hidden sm:inline">{tc.date}</span>
+                              </div>
+                            </div>
                             <div className="space-y-2">
                               {contactPayments?.map(payment => (
-                                <div key={payment.id} className="p-4 rounded-xl border border-gray-50 flex items-center justify-between bg-white/50 group/item">
+                                <div key={`payment-${payment.id}`} className="p-4 rounded-xl border border-gray-50 flex items-center justify-between bg-white/50 group/item hover:bg-white hover:shadow-md hover:shadow-apple-green/5 transition-all">
                                   <div className="flex items-center gap-4">
-                                    <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-apple-green">
+                                    <div className={cn(
+                                      "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                                      editingPayment?.id === payment.id ? "bg-apple-blue text-white" : "bg-green-50 text-apple-green"
+                                    )}>
                                       <DollarSign size={14} />
                                     </div>
                                     <div>
-                                      <p className="text-sm font-bold text-apple-dark-blue">${payment.amount.toLocaleString()} <span className="text-[10px] text-gray-400 font-medium leading-none ml-2">{payment.method}</span></p>
-                                      <p className="text-[10px] text-apple-gray font-medium">{new Date(payment.date).toLocaleString()}</p>
+                                      <p className="text-sm font-bold text-apple-dark-blue">
+                                        {currency}{payment.amount.toLocaleString()}
+                                        <span className="text-[10px] text-gray-400 font-medium leading-none ml-2 bg-gray-100 px-1.5 py-0.5 rounded">
+                                          {payment.method === 'Cash' ? t.pos.cash : 
+                                           payment.method === 'Card' ? t.pos.card : 
+                                           t.pos.transfer}
+                                        </span>
+                                      </p>
+                                      <p className="text-[10px] text-apple-gray font-medium">{new Date(payment.date).toLocaleString(lang === 'ar' ? 'ar-EG' : 'en-US')}</p>
                                     </div>
                                   </div>
-                                  <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                                  <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 focus-within:opacity-100 transition-opacity">
                                     <button 
-                                      onClick={() => setEditingPayment(payment)}
+                                      onClick={() => {
+                                        setEditingPayment(payment);
+                                        setShowPaymentModal(true);
+                                      }}
+                                      title={tc.update}
                                       className="p-1.5 text-gray-300 hover:text-apple-blue transition-colors"
                                     >
                                       <Edit3 size={14} />
                                     </button>
                                     <button 
                                       onClick={async () => {
-                                        if (confirm(lang === 'en' ? 'Delete this payment record?' : 'حذف سجل الدفع هذا؟')) {
+                                        if (confirm(tc.confirmDeletePayment)) {
                                           await db.transaction('rw', [db.payments, db.customers], async () => {
                                             await db.payments.delete(payment.id!);
                                             const updatedPaid = (viewingDetails as Customer).totalPaid - payment.amount;
                                             await db.customers.update(viewingDetails.id!, { totalPaid: updatedPaid });
                                             setViewingDetails({ ...viewingDetails, totalPaid: updatedPaid } as Customer);
+                                            if (editingPayment?.id === payment.id) setEditingPayment(null);
                                           });
                                         }
                                       }}
+                                      title={t.delete}
                                       className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
                                     >
                                       <Trash2 size={14} />
@@ -539,23 +623,23 @@ export function CRMView({ lang, t }: CRMViewProps) {
                                   </div>
                                 </div>
                               ))}
-                              {contactPayments?.length === 0 && <p className="text-center py-4 text-[11px] text-gray-400 font-medium">No direct payments recorded</p>}
+                              {contactPayments?.length === 0 && <p className="text-center py-6 text-[11px] text-gray-400 font-medium italic">{tc.noDirectPayments}</p>}
                             </div>
                           </div>
 
                           <div>
-                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-1 mb-3">{lang === 'en' ? 'Recent Sales' : 'المبيعات الأخيرة'}</p>
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest px-1 mb-3">{tc.recentSales}</p>
                             <div className="space-y-3">
                               {contactSales?.map(sale => (
-                                <div key={sale.id} className="p-4 rounded-2xl border border-gray-100 flex items-center justify-between bg-white">
+                                <div key={`sale-${sale.id}`} className="p-4 rounded-2xl border border-gray-100 flex items-center justify-between bg-white">
                                   <div>
                                      <p className="font-bold text-apple-dark-blue">{new Date(sale.date).toLocaleDateString()}</p>
-                                     <p className="text-xs text-apple-gray font-medium">{sale.items.length} items • {sale.paymentMethod}</p>
+                                     <p className="text-xs text-apple-gray font-medium">{sale.items.length} {t.crm.itemsCount} • {sale.paymentMethod === 'Cash' ? t.pos.cash : sale.paymentMethod === 'Card' ? t.pos.card : t.pos.transfer}</p>
                                   </div>
                                   <div className="text-right">
-                                     <p className="font-black text-apple-blue">${sale.totalAmount.toLocaleString()}</p>
+                                     <p className="font-black text-apple-blue">{currency}{sale.totalAmount.toLocaleString()}</p>
                                      {sale.totalAmount > sale.amountPaid && (
-                                       <p className="text-[10px] text-red-500 font-bold">Unpaid: ${(sale.totalAmount - sale.amountPaid).toLocaleString()}</p>
+                                       <p className="text-[10px] text-red-500 font-bold">{lang === 'ar' ? 'غير مدفوع' : 'Unpaid'}: {currency}{(sale.totalAmount - sale.amountPaid).toLocaleString()}</p>
                                      )}
                                   </div>
                                 </div>
@@ -565,21 +649,131 @@ export function CRMView({ lang, t }: CRMViewProps) {
                         </div>
                       ) : (
                         contactPurchases?.map(p => (
-                          <div key={p.id} className="p-4 rounded-2xl border border-gray-100 flex items-center justify-between bg-white">
+                          <div key={`purchase-${p.id}`} className="p-4 rounded-2xl border border-gray-100 flex items-center justify-between bg-white">
                             <div>
                                <p className="font-bold text-apple-dark-blue">{new Date(p.date).toLocaleDateString()}</p>
-                               <p className="text-xs text-apple-gray font-medium">Invoice: {p.invoiceNumber} • {p.status}</p>
+                               <p className="text-xs text-apple-gray font-medium">{lang === 'ar' ? 'فاتورة' : 'Invoice'}: {p.invoiceNumber} • {p.status}</p>
                             </div>
-                            <p className="font-black text-apple-blue">${p.totalAmount.toLocaleString()}</p>
+                            <p className="font-black text-apple-blue">{currency}{p.totalAmount.toLocaleString()}</p>
                           </div>
                         ))
                       )}
                       {((activeTab === 'Customers' ? (contactSales?.length === 0 && contactPayments?.length === 0) : contactPurchases?.length === 0)) && (
-                        <p className="text-center py-10 text-gray-400 font-bold">No history found</p>
+                        <p className="text-center py-10 text-gray-400 font-bold">{tc.noHistory}</p>
                       )}
                    </div>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPaymentModal && viewingDetails && activeTab === 'Customers' && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-md rounded-[48px] shadow-2xl p-10 relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-apple-green/5 rounded-full blur-3xl -mr-16 -mt-16" />
+              
+              <div className="flex items-center justify-between mb-8 relative">
+                <h2 className="text-2xl font-black text-apple-dark-blue">
+                  {editingPayment ? tc.editPayment : tc.recordPayment}
+                </h2>
+                <button onClick={() => setShowPaymentModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                  <X size={20} className="text-gray-400" />
+                </button>
+              </div>
+
+              <form 
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.currentTarget);
+                  const amount = parseFloat(formData.get('amount') as string);
+                  const method = formData.get('method') as 'Cash' | 'Card' | 'Transfer';
+                  const dateStr = formData.get('date') as string;
+                  const date = dateStr ? new Date(dateStr).getTime() : Date.now();
+                  
+                  if (amount > 0) {
+                    if (editingPayment) {
+                      await db.transaction('rw', [db.payments, db.customers], async () => {
+                        await db.payments.update(editingPayment.id!, { amount, method, date });
+                        const updatedPaid = (viewingDetails as Customer).totalPaid - editingPayment.amount + amount;
+                        await db.customers.update(viewingDetails.id!, { totalPaid: updatedPaid });
+                        setViewingDetails({ ...viewingDetails, totalPaid: updatedPaid } as Customer);
+                        setEditingPayment(null);
+                        setShowPaymentModal(false);
+                      });
+                    } else {
+                      await db.transaction('rw', [db.payments, db.customers], async () => {
+                        await db.payments.add({
+                          customerId: viewingDetails.id!,
+                          amount,
+                          date,
+                          method
+                        });
+                        const updatedPaid = (viewingDetails as Customer).totalPaid + amount;
+                        await db.customers.update(viewingDetails.id!, { totalPaid: updatedPaid });
+                        setViewingDetails({ ...viewingDetails, totalPaid: updatedPaid } as Customer);
+                        setShowPaymentModal(false);
+                      });
+                    }
+                  }
+                }}
+                className="space-y-6 relative"
+              >
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.amount}</label>
+                  <div className="relative">
+                    <DollarSign size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-apple-green" />
+                    <input
+                      name="amount"
+                      type="number"
+                      step="0.01"
+                      required
+                      defaultValue={editingPayment?.amount}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 pl-12 pr-6 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-green/10 transition-all font-rubik"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.method}</label>
+                  <select
+                    name="method"
+                    defaultValue={editingPayment?.method || 'Cash'}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-6 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-green/10 transition-all font-rubik"
+                  >
+                    <option value="Cash">{t.pos.cash}</option>
+                    <option value="Card">{t.pos.card}</option>
+                    <option value="Transfer">{t.pos.transfer}</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">{tc.date}</label>
+                  <input
+                    name="date"
+                    type="date"
+                    required
+                    defaultValue={new Date(editingPayment?.date || Date.now()).toISOString().split('T')[0]}
+                    className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 px-6 text-sm font-bold focus:outline-none focus:ring-4 focus:ring-apple-green/10 transition-all font-rubik"
+                  />
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    type="submit"
+                    className="w-full py-5 rounded-2xl bg-apple-green text-white font-black uppercase tracking-widest text-xs shadow-xl shadow-apple-green/20 hover:scale-[1.02] active:scale-95 transition-all"
+                  >
+                    {editingPayment ? tc.update : tc.record}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
